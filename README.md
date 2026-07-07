@@ -104,7 +104,7 @@ python -m jq_tushare_sdk.cli backtest \
   --output-dir backtest_runs
 ```
 
-运行回测前会先检查本地缓存；如发现可定位的缺口，会使用 `TUSHARE_TOKEN` 自动补齐并复查，复查仍失败时才停止回测并输出原因。检查会识别策略中静态可推断的 `get_price(count=...)` 历史窗口，并为 ETF/基金价格和基准指数补齐回测开始日前的必要 lookback。
+运行回测前会先检查本地缓存；如发现可定位的缺口，会使用 `TUSHARE_TOKEN` 自动补齐并复查，复查仍失败时才停止回测并输出原因。检查会识别策略中静态可推断的 `get_price(count=...)`、`attribute_history(..., count)` 和 `history(count, ...)` 历史窗口，并为 ETF/基金价格和基准指数补齐回测开始日前的必要 lookback。
 
 `get_fundamentals(..., statDate=...)` 读取 `income` 财务数据时会按查询日过滤 `ann_date` / `f_ann_date`，避免使用未来才披露的报表；如果请求季度在查询日尚无可见数据，会自动回退到前一个已披露且无未来数据的季度。
 
@@ -127,6 +127,20 @@ python -m jq_tushare_sdk.cli backtest \
 ```text
 Backtest complete: backtest_runs/<run_id>
 ```
+
+## Baseline Template
+
+项目内提供一份最小可运行基线模板，便于团队使用同一份策略程序对齐调仓结果和本地 Tushare 缓存口径：
+
+```text
+examples/joinquant_dual_ma_momentum_baseline.py
+```
+
+双均线动量模板只依赖常见 `jqdata` API，默认使用多 ETF 池、20/60 日均线和每周调仓，按动量排名最多持有 2 只 ETF；已在目标池中的持仓不会反复按金额微调，适合作为聚宽与本地 SDK 对齐数据、调仓日期和成交路径的基线程序。需要做本地 SDK 对齐时，先用同一回测区间和基准在聚宽端运行，再对比本地报告中的持仓、收益曲线和日志输出。
+
+下图是双均线动量基线在本地 Web 控制台生成的回测报告示例：
+
+![双均线动量基线回测报告](docs/images/dual-ma-backtest-report.png)
 
 ## Web Console
 
@@ -153,11 +167,12 @@ Web 控制台提供：
 - “设置”面板用于调整缓存数据库、结果目录和数据层优化开关。
 - 本地缓存数据检查。
 - 历史报告刷新，可在补齐基准指数缓存后重新计算基准收益、超额收益、Alpha 和 Beta。
+- 失败任务会直接显示错误摘要，并可展开查看完整异常和补数建议。
 - 首页只显示运行中或失败的后台任务，完成的回测进入历史记录页，避免挤占报告阅读区。
 - 主页面直接显示选中的 HTML 回测报告。
 - 独立历史记录页，可搜索历史回测并跳回主报告页查看。
 
-策略文件选择使用浏览器文件弹窗。由于浏览器不会把本机绝对路径暴露给本地服务，Web 控制台会把选中的 `.py` 文件复制到项目内 `.jqts_web/strategies/` 后再运行；原始策略文件不会被修改。CLI 调用方式仍然直接使用命令行传入的策略路径。
+策略文件选择使用浏览器文件弹窗。由于浏览器不会把本机绝对路径暴露给本地服务，Web 控制台会把选中的 `.py` 文件复制到项目内 `.jqts_web/strategies/` 后再运行；原始策略文件不会被修改。CLI 调用方式仍然直接使用命令行传入的策略路径。上传后界面会显示策略 `VERSION`、来源和文件 Hash；如果当前选择的是旧上传快照，且项目中存在同名更新策略，运行前会提示并改用项目原文件。
 
 Web 控制台只绑定本地地址时不会对外提供服务；如需改成其他监听地址，请自行确认网络和权限边界。
 
@@ -238,7 +253,7 @@ http://127.0.0.1:8787/report.html
 
 ## Versioning
 
-当前版本：`v0.10.3`
+当前版本：`v0.10.17`
 
 版本号遵循 Semantic Versioning：
 
@@ -278,6 +293,8 @@ python -m unittest discover -s tests -p "test_*.py"
 - 本地数据库缓存
 - 回测输出目录
 - `.jqts_web/` Web 控制台临时策略副本
+- `experiments/` 本地实验目录和个人策略
+- `examples/private/`、`strategies/` 等私有策略目录
 - 大型日志、临时 CSV、下载文件
 
-建议通过环境变量传入 token，不要把 token 写进代码或配置文件。
+建议通过环境变量传入 token，不要把 token 写进代码或配置文件。个人实验策略应放在 `experiments/`、`examples/private/` 或仓库外目录；这些路径默认不会提交或发布。

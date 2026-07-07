@@ -4,6 +4,101 @@ All notable changes to JQ Tushare SDK are documented in this file.
 
 This project follows Semantic Versioning.
 
+## [0.10.17] - 2026-07-07
+
+### Changed
+
+- Ignore local experiment strategies and document private strategy handling.
+
+## [0.10.16] - 2026-07-07
+
+### Changed
+
+- Add interactive hover tooltips for report charts.
+
+## [0.10.15] - 2026-07-07
+
+### Changed
+
+- Add Sharpe ratio and capital turnover metrics to risk report.
+
+## [0.10.14] - 2026-07-06
+
+### Changed
+
+- Optimize repeated get_price reads with date-range and result caches
+
+## [0.10.13] - 2026-07-05
+
+### Changed
+
+- Run initial weekly callbacks when the first backtest day is after the scheduled weekday
+- Match JoinQuant fixed-spread slippage by applying half the spread per trade side
+- Align `order_target_value` sizing and cash checks with JoinQuant's pre-slippage price basis
+
+## [0.10.12] - 2026-07-05
+
+### Changed
+
+- Show failed backtest errors in the web console
+
+## [0.10.11] - 2026-07-05
+
+### Changed
+
+- Embed dual moving-average backtest screenshot in docs
+
+## [0.10.10] - 2026-07-05
+
+### Changed
+
+- Remove factor alignment example template
+
+## [0.10.9] - 2026-07-05
+
+### Changed
+
+- Fix attribute_history data readiness and holiday weekly scheduling
+
+## [0.10.8] - 2026-07-05
+
+### Changed
+
+- Prefer project strategy files when stale uploaded snapshots are submitted.
+
+## [0.10.7] - 2026-07-05
+
+### Changed
+
+- Show strategy source metadata and warn before running stale uploaded snapshots.
+
+## [0.10.6] - 2026-07-05
+
+### Changed
+
+- Expand the dual moving-average baseline to weekly multi-ETF rotation.
+- Use zero sell tax in the ETF baseline cost model.
+
+## [0.10.5] - 2026-07-05
+
+### Added
+
+- Add local dual moving-average momentum baseline strategy.
+
+### Changed
+
+- Avoid repeated sub-lot rebalancing in the dual moving-average baseline while the signal is unchanged.
+
+## [0.10.4] - 2026-07-05
+
+### Added
+
+- Add JoinQuant factor alignment template for data comparisons.
+
+### Changed
+
+- Support ETF adjustment factors for local fund price adjustments.
+
 ## [0.10.3] - 2026-07-04
 
 ### Changed
