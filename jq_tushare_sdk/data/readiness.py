@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from jq_tushare_sdk.data.code_map import is_tushare_fund_code
+from jq_tushare_sdk.data.code_map import is_tushare_index_code
 from jq_tushare_sdk.data.code_map import normalize_date
 from jq_tushare_sdk.data.code_map import to_tushare_code
 
@@ -85,10 +86,10 @@ class DataReadinessCheck:
             issues.append(fund_issue)
         for api_name in apis:
             if api_name == "index_daily":
-                issue = self._check_benchmark_index(config, price_market_start, price_market_end)
+                issue = self._check_required_indexes(config, price_market_start, price_market_end)
                 if issue is not None:
                     issues.append(issue)
-                    continue
+                continue
             if api_name == "index_weight":
                 issue = self._check_index_weight(config, start, end)
                 if issue is not None:
@@ -167,43 +168,74 @@ class DataReadinessCheck:
             update_requests=(_update_request("stock_basic"),),
         )
 
-    def _check_benchmark_index(self, config, start: str, end: str) -> ReadinessIssue | None:
+    def _check_required_indexes(self, config, start: str, end: str) -> ReadinessIssue | None:
         benchmark = infer_strategy_benchmark(getattr(config, "strategy_path", None)) or getattr(config, "benchmark", None)
-        if not benchmark:
-            return None
-        ts_code = to_tushare_code(str(benchmark))
-        try:
-            frame = self.backend.fetch(
-                "index_daily",
-                ts_code=ts_code,
-                start_date=start,
-                end_date=end,
-            )
-        except Exception:
-            frame = None
-        min_date, max_date = _frame_date_bounds(frame, "trade_date")
-        if min_date is not None and max_date is not None and start >= min_date and end <= max_date:
-            return None
+        requirements: dict[str, tuple[str, str]] = {}
+
+        def add_requirement(symbol, required_start: str) -> None:
+            ts_code = to_tushare_code(str(symbol))
+            current = requirements.get(ts_code)
+            if current is None or required_start < current[1]:
+                requirements[ts_code] = (str(symbol), required_start)
+
+        if benchmark:
+            add_requirement(benchmark, start)
+        for symbol, count in infer_strategy_index_price_requirements(getattr(config, "strategy_path", None)).items():
+            lookback_days = max(int(count) * 3 + 7, 14)
+            calendar_required_start = (
+                datetime.strptime(normalize_date(config.start_date), "%Y%m%d")
+                - timedelta(days=lookback_days)
+            ).strftime("%Y%m%d")
+            required_start, _ = self._market_date_bounds(calendar_required_start, end)
+            add_requirement(symbol, required_start)
+
+        incomplete = []
         update_requests = []
-        if min_date is None or max_date is None:
-            update_requests.append(_update_request("index_daily", start, end, ts_code=ts_code))
-            message = (
-                f"Local cache has no index_daily data for benchmark {benchmark} "
-                f"between {config.start_date} and {config.end_date}."
+        for ts_code, (symbol, required_start) in requirements.items():
+            try:
+                frame = self.backend.fetch(
+                    "index_daily",
+                    ts_code=ts_code,
+                    start_date=required_start,
+                    end_date=end,
+                )
+            except Exception:
+                frame = None
+            min_date, max_date = _frame_date_bounds(frame, "trade_date")
+            if min_date is not None and max_date is not None and required_start >= min_date and end <= max_date:
+                continue
+
+            if min_date is None or max_date is None:
+                missing_start, missing_end = required_start, end
+                detail = "has no local data"
+            else:
+                missing = []
+                if required_start < min_date:
+                    missing.append(f"starts at {min_date}, missing requested start {required_start}")
+                    missing_start, missing_end = required_start, min_date
+                else:
+                    missing_start, missing_end = max_date, end
+                if end > max_date:
+                    missing.append(f"ends at {max_date}, missing requested end {end}")
+                    missing_start, missing_end = missing_start, end
+                detail = ", ".join(missing)
+            incomplete.append(f"{symbol}({ts_code}) {detail}")
+            update_requests.append(
+                _update_request("index_daily", missing_start, missing_end, ts_code=ts_code)
             )
-        else:
-            missing = []
-            if start < min_date:
-                missing.append(f"starts at {min_date}, missing requested start {config.start_date}")
-                update_requests.append(_update_request("index_daily", start, min_date, ts_code=ts_code))
-            if end > max_date:
-                missing.append(f"ends at {max_date}, missing requested end {config.end_date}")
-                update_requests.append(_update_request("index_daily", max_date, end, ts_code=ts_code))
-            message = f"index_daily for benchmark {benchmark} is incomplete: {', '.join(missing)}."
+
+        if not incomplete:
+            return None
+        suggestion = " && ".join(
+            f"python -m jq_tushare_sdk.cli update-data --api index_daily "
+            f"--start {request.start_date} --end {request.end_date} --cache-db <cache_db> "
+            f"--ts-code {dict(request.params)['ts_code']}"
+            for request in update_requests
+        )
         return ReadinessIssue(
             api_name="index_daily",
-            message=message,
-            suggestion=f"python update_data.py --api index_daily --start-date {start} --end-date {end} --ts_code {ts_code}",
+            message=f"index_daily is incomplete for required indexes: {', '.join(incomplete)}.",
+            suggestion=suggestion,
             update_requests=tuple(update_requests),
         )
 
@@ -490,6 +522,30 @@ def infer_strategy_max_price_count(strategy_path) -> int:
     return max_count
 
 
+def infer_strategy_index_price_requirements(strategy_path) -> dict[str, int]:
+    if not strategy_path:
+        return {}
+    path = Path(strategy_path)
+    if not path.is_file():
+        return {}
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    except SyntaxError:
+        return {}
+
+    module_env = _module_static_env(tree)
+    context_env = _context_numeric_env(tree, module_env)
+    visitor = _IndexPriceCallVisitor(module_env, context_env)
+    visitor.visit(tree)
+    requirements: dict[str, int] = {}
+    calls = sorted(visitor.calls, key=lambda item: item[:2])
+    for _, _, symbols, count in calls:
+        for symbol in symbols:
+            if is_tushare_index_code(symbol):
+                requirements[symbol] = max(requirements.get(symbol, 0), count)
+    return requirements
+
+
 def _price_count_argument_node(node: ast.Call):
     for keyword in node.keywords:
         if keyword.arg == "count":
@@ -532,6 +588,66 @@ def _module_static_env(tree: ast.AST) -> dict[str, object]:
                 if isinstance(target, ast.Name) and value is not _UNRESOLVED:
                     module_env[target.id] = value
     return module_env
+
+
+class _IndexPriceCallVisitor(ast.NodeVisitor):
+    def __init__(self, module_env: dict[str, object], context_env: dict[str, float]):
+        self.module_env = module_env
+        self.context_env = context_env
+        self.loop_bindings: list[dict[str, tuple[str, ...] | None]] = []
+        self.calls: list[tuple[int, int, tuple[str, ...], int]] = []
+
+    def visit_For(self, node: ast.For):
+        self.visit(node.iter)
+        bindings = {}
+        if isinstance(node.target, ast.Name):
+            bindings[node.target.id] = _static_loop_string_values(node.iter, self.module_env)
+        self.loop_bindings.append(bindings)
+        for statement in node.body:
+            self.visit(statement)
+        self.loop_bindings.pop()
+        for statement in node.orelse:
+            self.visit(statement)
+
+    def visit_Call(self, node: ast.Call):
+        if _is_name(node.func, "get_price") and node.args:
+            count_node = _price_count_argument_node(node)
+            if count_node is not None:
+                count = _evaluate_numeric_expression(count_node, self.module_env, self.context_env)
+                if isinstance(count, (int, float)) and count > 0:
+                    symbols = self._resolve_symbols(node.args[0])
+                    if symbols:
+                        self.calls.append(
+                            (
+                                getattr(node, "lineno", -1),
+                                getattr(node, "col_offset", -1),
+                                symbols,
+                                int(count),
+                            )
+                        )
+        self.generic_visit(node)
+
+    def _resolve_symbols(self, node: ast.AST) -> tuple[str, ...]:
+        if isinstance(node, ast.Name):
+            for bindings in reversed(self.loop_bindings):
+                if node.id in bindings:
+                    return bindings[node.id] or ()
+        value = _evaluate_static_expression(node, self.module_env)
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, (list, tuple)):
+            return tuple(item for item in value if isinstance(item, str))
+        if isinstance(value, set):
+            return tuple(sorted(item for item in value if isinstance(item, str)))
+        return ()
+
+
+def _static_loop_string_values(node: ast.AST, module_env: dict[str, object]) -> tuple[str, ...] | None:
+    values = _evaluate_static_expression(node, module_env)
+    if not isinstance(values, (list, tuple, set)):
+        return None
+    strings = [value for value in values if isinstance(value, str)]
+    return tuple(dict.fromkeys(strings))
 
 
 def _context_numeric_env(tree: ast.AST, module_env: dict[str, object]) -> dict[str, float]:
@@ -584,6 +700,15 @@ def _evaluate_static_expression(node: ast.AST, env: dict[str, object]):
         return ast.literal_eval(node)
     except Exception:
         pass
+    if isinstance(node, ast.List):
+        values = [_evaluate_static_expression(element, env) for element in node.elts]
+        return values if all(value is not _UNRESOLVED for value in values) else _UNRESOLVED
+    if isinstance(node, ast.Tuple):
+        values = tuple(_evaluate_static_expression(element, env) for element in node.elts)
+        return values if all(value is not _UNRESOLVED for value in values) else _UNRESOLVED
+    if isinstance(node, ast.Set):
+        values = {_evaluate_static_expression(element, env) for element in node.elts}
+        return values if _UNRESOLVED not in values else _UNRESOLVED
     if isinstance(node, ast.Name):
         return env.get(node.id, _UNRESOLVED)
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get":

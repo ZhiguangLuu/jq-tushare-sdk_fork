@@ -104,9 +104,11 @@ python -m jq_tushare_sdk.cli backtest \
   --output-dir backtest_runs
 ```
 
-运行回测前会先检查本地缓存；如发现可定位的缺口，会使用 `TUSHARE_TOKEN` 自动补齐并复查，复查仍失败时才停止回测并输出原因。检查会识别策略中静态可推断的 `get_price(count=...)`、`attribute_history(..., count)` 和 `history(count, ...)` 历史窗口，并为 ETF/基金价格和基准指数补齐回测开始日前的必要 lookback。
+运行回测前会先检查本地缓存；如发现可定位的缺口，会使用 `TUSHARE_TOKEN` 自动补齐并复查，复查仍失败时才停止回测并输出原因。检查会识别策略中静态可推断的 `get_price(count=...)`、`attribute_history(..., count)` 和 `history(count, ...)` 历史窗口，并为 ETF/基金价格和基准指数补齐回测开始日前的必要 lookback。对于直接调用以及遍历模块级索引列表的循环中出现的 `get_price(count=...)` 指数依赖，系统会在执行前逐一推断并检查对应的历史数据。
 
-`get_fundamentals(..., statDate=...)` 读取 `income` 财务数据时会按查询日过滤 `ann_date` / `f_ann_date`，避免使用未来才披露的报表；如果请求季度在查询日尚无可见数据，会自动回退到前一个已披露且无未来数据的季度。
+`get_fundamentals(..., statDate=...)` 读取 `income` 财务数据时会按查询日过滤 `ann_date` / `f_ann_date`，避免使用未来才披露的报表。显式指定季度时严格返回该季度，尚未披露则返回空结果，便于策略按自身逻辑回退；未指定 `statDate` 时返回查询日可见的最新报表。
+
+日频 `get_price(..., end_date=context.current_dt)` 在 09:30 会用当日开盘价构造未完成日线，`high` / `low` / `close` 等于开盘价，成交量和成交额为 0，避免读取当日收盘数据。默认 `fill_paused=True` 会用前收盘价补齐停牌交易日；`skip_paused=True` 保留稀疏历史。`run_weekly` 按回测实际经历的本周第 N 个交易日触发，包括从周中开始的首周。
 
 `get_index_stocks(...)` 依赖的 `index_weight` 会在缺少回测起始日前成分股快照时向前回溯补数，避免月度权重第一条记录晚于回测起点导致本地检查失败。
 
@@ -121,6 +123,8 @@ python -m jq_tushare_sdk.cli backtest \
   --cache-db data/jq_tushare_cache.db \
   --no-optimize-data
 ```
+
+启用 `optimize_data` 时，回测引擎会在推导出的历史回看边界内复用按策略实际请求标的构建的规范化行情缓存。所有查询仍按当前回调的数据截止日切片，`fq="pre"` 仍使用查询截止日可见的最新复权因子；缓存初始化失败时自动回退到兼容查询路径。小盘基准策略在交易结果一致的验证下，总耗时由 467.98 秒降低至 274.66 秒。
 
 回测完成后会输出本次结果目录：
 
@@ -168,6 +172,7 @@ Web 控制台提供：
 - 本地缓存数据检查。
 - 历史报告刷新，可在补齐基准指数缓存后重新计算基准收益、超额收益、Alpha 和 Beta。
 - 失败任务会直接显示错误摘要，并可展开查看完整异常和补数建议。
+- 运行中的任务会显示数据准备、逐交易日执行和报告生成进度，并提供实时计时与安全取消操作。
 - 首页只显示运行中或失败的后台任务，完成的回测进入历史记录页，避免挤占报告阅读区。
 - 主页面直接显示选中的 HTML 回测报告。
 - 独立历史记录页，可搜索历史回测并跳回主报告页查看。
@@ -253,7 +258,7 @@ http://127.0.0.1:8787/report.html
 
 ## Versioning
 
-当前版本：`v0.10.17`
+当前版本：`v0.10.21`
 
 版本号遵循 Semantic Versioning：
 

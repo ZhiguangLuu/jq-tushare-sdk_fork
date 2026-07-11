@@ -4,6 +4,32 @@ All notable changes to JQ Tushare SDK are documented in this file.
 
 This project follows Semantic Versioning.
 
+## [0.10.21] - 2026-07-11
+
+### Changed
+
+- Add live backtest progress, elapsed timing, and cooperative cancellation to the Web console.
+
+## [0.10.20] - 2026-07-11
+
+### Changed
+
+- Align 09:30 partial daily bars and weekly trading-day scheduling with JoinQuant.
+- Fill paused price rows without leaking future daily data.
+- Keep explicit income quarters exact while preserving latest-visible defaults.
+
+## [0.10.19] - 2026-07-11
+
+### Changed
+
+- Infer, validate, and backfill strategy index price dependencies, including Shanghai Composite routing.
+
+## [0.10.18] - 2026-07-11
+
+### Changed
+
+- Add transparent canonical price caching, layered performance metrics, SQLite read optimization, and sensitive log redaction.
+
 ## [0.10.17] - 2026-07-07
 
 ### Changed
